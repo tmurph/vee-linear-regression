@@ -1,0 +1,3 @@
+# Working with LaTeX makes a bunch of garbage files
+*.tex
+*.aux

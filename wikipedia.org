@@ -1,0 +1,1293 @@
+#+LaTeX_HEADER: \usepackage{amsmath,url,subcaption,comment,booktabs}
+#+LaTeX_HEADER: \usepackage[round-precision=4,round-mode=figures,scientific-notation=true]{siunitx}
+#+LaTeX_HEADER: \usepackage[super]{nth}
+#+LaTeX_HEADER: \newcommand{\mytilde}{\raise.17ex\hbox{$\scriptstyle\mathtt{\sim}$}}
+
+#+TITLE: Regression Analysis Fall 2012
+#+AUTHOR: Trevor Murphy
+#+EMAIL: trevor.m.murphy+vee@gmail.com
+
+#+OPTIONS: num:nil toc:nil tasks:nil
+
+#+BEGIN_SRC latex :noweb yes
+  \begin{abstract}
+    We find that the citation density of Wikipedia articles, measured as
+    the number of unique citations divided by the article word count,
+    may decrease very slightly with the length of the
+    article. $\hat{\beta} \approx
+    \num[round-precision=1]{<<linreg-beta()>>}$ in the linear
+    regression, but heteroscedasticity casts significant doubt on our
+    significance testing.
+  \end{abstract}
+#+END_SRC
+
+* Introduction
+
+We live in a world of incomprehensibly large sets of data.  Despite these
+volumes, we routinely set ourselves the task of drawing accurate inferences from
+the data to support the analysis at hand.  On some occasions we may fall back on
+raw computing power to solve the problem, but the intelligent application of
+statistical methods can often point us in the correct direction with a fraction
+of the time and energy invested.
+
+To demonstrate this point, the author set himself the task of estimating the
+number of citations, $Y$, in a Wikipedia article given the article's word count,
+$X$.  Intuition suggests that $Y$ must increase with $X$, but we wonder if the
+increase is linear, such that $\frac{Y}{X}$ is approximately constant with
+respect to $X$?  We name this fraction of citations per word the ``citation
+density'' of the article, and we investigate how this quantity behaves.
+
+* Data and Analysis
+:PROPERTIES:
+:noweb: yes
+:END:
+
+Wikimedia engineers routinely publish ``dumps'' of the various wiki-projects in
+XML format.  For the present analysis the author selected the English Wikipedia
+dump from January 2, 2013 of all current articles[fn:1].  According to
+Wikimedia's documentation[fn:2], this file
+- Contains current versions of all article pages, templates, and other pages
+- Excludes discussion pages (`Talk:') and user ``home'' pages (`User:')
+- Recommended for republishing of content.
+  
+** Data Description
+
+The downloaded dump from Wikimedia came in a compressed format that expanded to
+40 gigabytes of XML data, which included identifying elements and full text on
+over 13 million articles.  The author created a simple program in the popular
+Python[fn:3] programming langauge to parse these articles down to records of
+word and citation counts.  At the same time, the program removed \mytilde 3
+million articles that belonged to the `Wikipedia' namespace, i.e. supported the
+internal functioning of Wikipedia and were of no interest to the present
+analysis.
+
+With 10 million parsed and filtered article records in hand, the author applied
+a second filtering step to suit the analysis.  Terse redirect pages and long
+disambiguation lists (as well as other common features of Wikipedia that have no
+need for citations) comprised a majority of the records.  As these articles had
+zero citation frequency by design, they did not fit the assumptions of our
+chosen (logistic) model.
+
+To work around this problem, \emph{all} sampled articles with zero citations
+were filtered from the data set, leaving 2.5 million for further analysis.  This
+step invariably threw out many legitimate articles.  However, since we lacked
+the sophistication to appropriately define ``legitimate'' zero-citation
+articles, we contented ourselves to study only articles of non-zero citation
+density.  Of the 2.5 million, the author drew a random sample of approximately
+2,500.  The author's programs and data sets should have been distributed with
+this report; if not, please see the [[Appendix]].  A few of the sampled data records
+appear in Table\nbsp\ref{tab:sample-data}.
+
+#+NAME: sample-data-latex
+#+BEGIN_SRC latex :noweb yes
+  \begin{table}[p]
+    \caption{Examples of Sampled Article Data}
+    \makebox[\textwidth][c]{
+      <<booktabs(table=sample-data-table, align="cccc")>>
+    }
+    \label{tab:sample-data}
+  \end{table}
+#+END_SRC
+
+#+RESULTS[ee8df0772b34929d7a63f0316a5104d3bc1a477d]: sample-data-latex
+#+BEGIN_LaTeX
+\begin{table}[p]
+  \caption{Examples of Sampled Article Data}
+  \makebox[\textwidth][c]{
+    
+    \begin{tabular}{cccc}
+    \toprule
+    Article ID & Article Title & Word Count $X$ & Link (Cite) Count $Y$ \\
+    \midrule
+    1146 & Assembly line & 3733 & 17 \\
+    3395 & Gautama Buddha & 9343 & 63 \\
+     & ... &  &  \\
+    38083580 & Midland Railway War Memorial, Derby & 671 & 8 \\
+    38087721 & Hugh Gallacher (footballer born 1870) & 267 & 1 \\
+    \bottomrule
+    \end{tabular}
+    
+  }
+  \label{tab:sample-data}
+\end{table}
+#+END_LaTeX
+
+** Analysis with Python
+
+The author used Python to perform the regression analysis.  Like the users of R,
+the Python community has created an extensive body of packages to support
+specialized work - SciPy[fn:4] provided the statistical routines for the
+following.  In addition, matplotlib[fn:5] provided the graphical plotting tools
+for the images used.
+
+Basic summary statistics for both variables of interest were simple to calculate
+using the =stats= package from SciPy.  For illustrative purposes we present the
+code here with a description immediately following.  (Note that the
+=<<hyphenated-words>>= lines are not part of Python but rather are pseudocode to
+gloss over the steps necessary to import our raw data and load the word and
+citation counts, $X$ and $Y$, into the array variable =data=).
+
+#+BEGIN_SRC python :noweb no :eval never
+  <<declare-imports>>
+  <<get-raw-data-sample-array>>
+#+END_SRC
+#+BEGIN_SRC python :noweb yes :eval never
+  <<from-numpy-array-make-summary-stats>>
+#+END_SRC
+
+Python functions can return the results of multiple calculations at once, and
+these results can be assigned to multiple variables by writing the targets
+sequentially on one line, separated by commas.  In the first line above the
+=describe= function returns the sample size, a pair of minimum and maximum
+values, the mean, variance, skewness, and the kurtosis of the data set.
+Variables with suggestive names have been created and assigned these values.
+
+Python can also succinctly express iterated code execution with what are termed
+"comprehensions".  In Python an ordered list is written with square brackets (as
+in =[1, 2, 3, 4]=) and placing a clause like =f(i) for i in
+a_sequence_of_values= within square brackets creates a list of the expected
+results by the process of "list comprehension".  In the second line above, the
+=scoreatpercentile= function (a/k/a quantile function) is evaluated on the data
+to calculate the quartiles, and the results are packaged in a list.  The
+elements of the list are then assigned to multiple comma-separated values.
+
+Finally, variables can themselves hold multiple values if it is convenient.
+While not obvious in the code above, the =describe= and =scoreatpercentile=
+functions have actually returned tuples of values in every case.  That is, the
+variable =Min= above contains the tuple =(min(x), min(y))=, and likewise for
+=Max=, =Mean=, etc.  The first and second values of these tuples can be
+referenced with the =[0]= and =[1]= suffix notation, respectively, and new
+tuples can be created by enclosing computations in parentheses.  Thus the third
+line creates a =StdDev= tuple to match the others.
+
+The results of this code are presented in Table\nbsp\ref{tab:summary-stats}.
+Notice the extreme right-skew of both variables - even though 75\% of articles
+contain fewer than 1074 words and fewer than 6 citations, the sampled upper
+bounds on word length and citation count are so high that the sample means are
+approximately equal to the \nth{75} percentile.
+
+#+NAME: summary-stats-latex
+#+BEGIN_SRC latex
+  \begin{table}[hp]
+    \centering
+    \caption{Summary Statistics for Sampled Article Data}
+    <<booktabs(table=summary-stats-table, align="lcccccccc")>>
+    \label{tab:summary-stats}
+  \end{table}
+#+END_SRC
+
+#+RESULTS[1fce5a83fdd2d1a2a60311e420c13ea9a9cfd6ad]: summary-stats-latex
+#+BEGIN_LaTeX
+\begin{table}[htb]
+  \centering
+  \caption{Summary Statistics for Sampled Article Data}
+  
+  \begin{tabular}{lcccccccc}
+  \toprule
+  Var & N & Min & $Q_1$ & Median & Mean & $Q_3$ & Max & StdDev \\
+  \midrule
+  $X$ & 2472 & 30 & 272 & 556 & 1070 & 1158 & 28844 & 1844 \\
+  $Y$ & 2472 & 1 & 1 & 3 & 7 & 7 & 476 & 19 \\
+  \bottomrule
+  \end{tabular}
+  
+  \label{tab:summary-stats}
+\end{table}
+#+END_LaTeX
+
+** Model
+
+We used the following logistic regression model of the citation density on the
+article word count, where $X$ is the word count, $Y$ is the citation count, and
+$\frac{Y}{X}$ is the citation density.
+#+BEGIN_LaTeX
+  \begin{align}
+    logit\left(\frac{Y_i}{X_i}\right) = \alpha + \beta X_i \label{link_freq}
+  \end{align}
+#+END_LaTeX
+Since densities must always fall between 0 and 1 a simple linear regression of
+density on word count would not be appropriate.  We expected that this model
+would show a strong linear relation, though perhaps with a small $\beta$.
+
+Regressing $logit\left(\frac{Y_i}{X_i}\right)$ on $X_i$ was equally
+straightforward with the =stats= package from SciPy.  Picking up with the same
+=data= array as used in the previous code, the relevant commands were:
+
+#+BEGIN_SRC python :noweb yes
+  <<process-numpy-array-to-X-Y-Lt>>
+  <<linear-regress-X-Lt-with-scipy>>
+#+END_SRC
+
+In the interest of space, we do not explain this code in as much detail as the
+previous block.  The function =linregress= is, like the previous functions, well
+documented by the SciPy team.  Before moving on we only remind that each
+variable =X=, =Y=, =P=, =Lt=, and =Lt_hat= contains a 2,500-entry array
+representing the sample data and its transformations.  Math operators like =*=,
+=-=, and =log= apply elementwise to each array[fn:6].
+
+The least squares regression estimates of the model parameters were:
+
+#+NAME: linreg-results-latex
+#+BEGIN_SRC latex
+  \begin{align*}
+    \hat{\alpha} & = \num{<<linreg-alpha()>>} \\
+    \hat{\beta} & = \num{<<linreg-beta()>>}
+  \end{align*}
+#+END_SRC
+
+#+BEGIN_SRC latex
+  $\hat{\beta}$ was quite small.  However, the $p$-value associated with
+  the null hypothesis ($\beta = 0$) was \num{<<linreg-p()>>}, far less
+  than the customary 0.05.
+  
+  How else could we gain comfort in our model?  The standard error of
+  the overall estimate was \num{<<linreg-stderr()>>},
+  while \[\sqrt{\frac{1}{\sum\left(x_i-\bar{x}\right)^2}} =
+  \num{<<linreg-beta-mult()>>}\] and hence the standard error of our
+  estimate $\hat{\beta}$ was \num{<<linreg-beta-stderr()>>} .  This was
+  so small that the 95\%, 99\%, and 99.9\% confidence intervals all
+  agreed to the fourth significant figure - and did not include any
+  appreciable deviation from $\hat{\beta}$.  That is to say, each
+  mentioned confidence interval was (\num{<<linreg-beta()>>},
+  \num{<<linreg-beta()>>}).
+#+END_SRC
+
+Truth be told, the author still prefered a third source of confidence.  Numbers
+this precise may have indicated that we were overfitting a poor model.
+Figure\nbsp\ref{fig:2d-linreg-plots} gives the model results plotted on an
+unscaled and a log-scaled $X$ axis.  These plots show that our concern was
+justified - the data was highly heteroscedastic[fn:7].  We could not place much
+confidence in the results of our hypothesis test.
+
+#+BEGIN_LaTeX
+  \begin{figure}[hp]
+    \centering
+    \begin{subfigure}[b]{0.45\textwidth}
+      \centering
+      \includegraphics[width=\textwidth,height=0.8\textwidth]{img-unscaled-plot}
+      \caption{Unscaled Plot}
+      \label{fig:unscaled-plot}
+    \end{subfigure}
+    \begin{subfigure}[b]{0.45\textwidth}
+      \centering
+      \includegraphics[width=\textwidth,height=0.8\textwidth]{img-scaled-plot}
+      \caption{Log-Scaled $X$ Axis}
+      \label{fig:scaled-plot}
+    \end{subfigure}
+    \caption{Logistic Model Plots}
+    \label{fig:2d-linreg-plots}
+  \end{figure}
+#+END_LaTeX
+
+For source code used in this analysis, please see the [[Appendix]].
+
+* Conclusion
+
+As mentioned in the introduction, intelligent application of statistical methods
+is but one way to infer characteristics of large data sets.  We can also digest
+whole data sets with today's overabundant computing power.  For instance, the
+author was able to process the entire Wikipedia data set on a Saturday using
+only his personal laptop.
+
+In Figures\nbsp\ref{fig:3d-hist-plots} and \ref{fig:hist-and-contour-plots} we
+plot histograms of $log(X)$ vs $logit\left(\frac{Y}{X}\right)$ vs $log(count)$
+where $count$ is the number of articles in the histogram bin and we have taken
+the log of $X$ and $count$ for clarity of the picture.  Figures
+\ref{fig:two-hist-plot} and \ref{fig:three-hist-plot} give us a graphical feel
+for the data, while contour slices for fixed values of $log(X)$ as in
+Figure\nbsp\ref{fig:contour-plot} reveal a surprising pattern in the
+distribution of citation density for values of $log(X)$ above 6 (i.e. word
+counts above \mytilde400).
+
+#+BEGIN_LaTeX
+  \begin{figure}[ph]
+    \centering
+    \begin{subfigure}{0.8\textwidth}
+      \includegraphics[width=\textwidth,height=0.8\textwidth]{img-two-hist-plot}
+      \caption{2D Histogram}
+      \label{fig:two-hist-plot}
+    \end{subfigure}
+    \begin{subfigure}{0.8\textwidth}
+      \includegraphics[width=\textwidth,height=0.8\textwidth]{img-three-hist-plot}
+      \caption{3D Histogram}
+      \label{fig:three-hist-plot}
+    \end{subfigure}
+    \caption{Histogram Plots of English Wikipedia Data}
+    \label{fig:3d-hist-plots}
+  \end{figure}
+  
+  \begin{figure}[ph]
+    \centering
+    \begin{subfigure}{0.8\textwidth}
+      \includegraphics[width=\textwidth,height=0.8\textwidth]{img-three-hist-plot}
+      \caption{3D Histogram - Repeated for Clarity}
+    \end{subfigure}
+    \begin{subfigure}{0.8\textwidth}
+      \includegraphics[width=\textwidth,height=0.8\textwidth]{img-contour-plot}
+      \caption{$log(X) = 10, 9, ...$}
+      \label{fig:contour-plot}
+    \end{subfigure}
+    \caption{Contour Plot of English Wikipedia Data}
+    \label{fig:hist-and-contour-plots}
+  \end{figure}
+#+END_LaTeX
+
+For each sufficiently large fixed $X$ the contour of $log(count)$ above
+$logit\left(\frac{Y}{X}\right)$ appears to rapidly rise then fall linearly.
+This suggests to the author that the log-odds of citation density in an article
+of length $X$ could be well modeled by a Poisson distribution.  The downward
+slopes of the contours appear relatively consistent, suggesting that one
+constant exponential parameter $\lambda$ could apply for all sufficiently large
+$X$.
+
+This model would tend to contradict our previous conclusion that the expected
+citation density decreases with increasing word count.  Unfortunately, the
+analysis necessary to justify such a supposed model is beyond the author's
+abilities and this article's scope, and the author would be equally at a loss to
+interpret such a model even if it were justified.  We close, then, on a
+speculative note, and we invite followup from any interested parties.
+
+#+BEGIN_LaTeX
+  \newpage
+#+END_LaTeX
+
+* Appendix
+
+The following attachments should have been included with the report.
+- Appendix-A-Sample-Data :: The random sample of \mytilde2,500 articles used in the
+     linear regression analysis, and the Python code used to take the random
+     sample.
+- Appendix-B-Summary-Statistics-Code :: A Python program to calculate the
+     summary statistics presented in Table \ref{tab:summary-stats}
+- Appendix-C-Linreg-Figure-Code :: A Python program to create the linear regression
+     images used in Figure \ref{fig:2d-linreg-plots}
+
+Additionally, some folks may be interested in the following programs, which
+supported the analyis but are not crucial to the main conclusion.
+- Appendix-D-Data-Processing-Code :: A Python program to parse raw XML from the
+     Wikipedia data dump to the word- and citation-counts used in this analysis.
+- Appendix-E-All-Processed-Data :: The full set of 2.5 million word- and
+     citation-counts produced by parsing the Wikipedia XML.
+- Appendix-F-Histogram-Figure-Code :: A Python program to create the 3-D
+     histogram and contour plots used in Figures \ref{fig:3d-hist-plots} and
+     \ref{fig:hist-and-contour-plots}
+
+If any of the previous attachments were not distributed alongside the report,
+please feel free to contact the author.
+
+* Post Scriptum
+
+This report was created from a combination of many freely available open-source
+tools.  In the interest of reproducibility, the programs used have been woven
+into the report itself, ready to be untangled by others on demand.
+
+The source for the report is available as a =.org= file[fn:8] to be read in the
+Emacs text editor[fn:9], and in theory the entire report can be automatically
+produced, from data download through regression analysis to finished =.pdf=,
+with the use of =GNU Make=. [fn:10]
+
+In theory.  As the sage once said, in theory there is no difference between
+theory and practice, but in practice there is.  The author has made the
+following effort to explicitly document which programs are necessary to
+reproduce the analysis with no intervention required.  Where appropriate,
+required version numbers have been included; more common utility programs
+are assumed to work regardless of version.
+
+- Primary programs involved were:
+  + =GNU Emacs=, version 24
+  + =Python=, version 3
+  + =SciPy=, =NumPy=, and =matplotlib= packages for =Python=
+  + \LaTeX with full extensions
+
+- Common utility programs employed were:
+  + =make=
+  + =curl=
+  + =bzip2=
+  + =grep=
+  + =tail=
+  + =cat=
+
+Have fun.
+
+* Source Code							   :noexport:
+:PROPERTIES:
+:cache: yes
+:END:
+
+Evaluate this code block to update the report.
+#+BEGIN_SRC sh
+  make Makefile
+  make
+#+END_SRC
+
+** Boilerplate Python
+:PROPERTIES:
+:eval: never
+:END:
+
+*** Code Atoms
+
+#+NAME: declare-imports
+#+BEGIN_SRC python
+  # Boo, import Axes3D.  This is some object that pieces of the pyplot
+  # module need to know about for 3D plotting.  But pyplot can't find it
+  # by itself.  Needs some handholding - a/k/a a pointless object in the
+  # global namespace.  Bad, bad, matplotlib.  Not Pythonic.  No biscuit.
+  from mpl_toolkits.mplot3d import Axes3D
+  from matplotlib import pyplot
+  from matplotlib import colors
+  from matplotlib import cm
+  from scipy import stats
+  import numpy
+  import math
+#+END_SRC
+
+#+NAME: get-raw-data-sample-array
+#+BEGIN_SRC python
+  
+  # Read in lines from the data file.  Watch out for escaped colon symbols.
+  with open("data-sample-records", "r") as f:
+      raw_data = [line.strip().replace("\:", chr(0)).split(":") for line in f]
+  
+      # Put the colons back and convert count to integers.
+      formatted_data = [[i, t.replace(chr(0), ":"), int(w), int(l)] for [i, t, w, l] in raw_data]
+  
+      # Remember that the data lines come in the following order:
+      ID, TITLE, WORDS, LINKS = 0, 1, 2, 3
+  
+      # Sort on word count.
+      sorted_data = sorted(formatted_data, key=lambda lst: lst[WORDS])
+  
+      # Pick out just the word and link (cite) counts for analysis.
+      data = numpy.array([[lst[WORDS], lst[LINKS]] for lst in sorted_data], dtype=float)
+#+END_SRC
+
+#+NAME: get-raw-data-all-array
+#+BEGIN_SRC python
+  
+  # Read in lines from the data file.  Watch out for escaped colon symbols.
+  with open("data-all-records", "r") as f:
+      raw_data = (line.strip().replace("\:", chr(0)).split(":") for line in f)
+  
+      # Put the colons back and convert count to integers.
+      formatted_data = ([i, t.replace(chr(0), ":"), int(w), int(l)] for [i, t, w, l] in raw_data)
+  
+      # Remember that the data lines come in the following order:
+      ID, TITLE, WORDS, LINKS = 0, 1, 2, 3
+  
+      # Sort on word count.
+      sorted_data = sorted(formatted_data, key=lambda lst: lst[WORDS])
+  
+      # Pick out just the word and link (cite) counts for analysis.
+      data = numpy.array([[lst[WORDS], lst[LINKS]] for lst in sorted_data], dtype=float)
+#+END_SRC
+
+#+NAME: process-numpy-array-to-X-Y-Lt
+#+BEGIN_SRC python
+
+  X = data[:, 0]
+  Y = data[:, 1]
+  P = Y / X
+  Lt = numpy.log(P / (1 - P))
+#+END_SRC
+
+#+NAME: plotting-disclaimer
+#+BEGIN_SRC python
+
+  # There's no more analysis to explain here.  Code from this point on
+  # is simply a collection of pyplot commands, documentation of which is
+  # best left to the internet.
+#+END_SRC
+
+#+NAME: create-plot-from-linreg
+#+BEGIN_SRC python
+
+  # Plot logit(X/Y) and plot in blue.
+  pyplot.plot(X, Lt, color='blue', marker='o', linestyle='None', label='Data')
+  
+  # Plot the regression in red.
+  pyplot.plot(X, Lt_hat, color='red', linewidth=2, label='Fit')
+  
+  # Add appropriate context.
+  pyplot.xlabel('X')
+  pyplot.ylabel('logit(Y/X)')
+  pyplot.legend(loc='lower right')
+#+END_SRC
+
+#+NAME: save-unscaled-plot
+#+BEGIN_SRC python
+
+  pyplot.savefig(open("img-unscaled-plot.png", "w"))
+#+END_SRC
+
+#+NAME: save-scaled-plot
+#+BEGIN_SRC python
+
+  # Log X axis.
+  pyplot.xscale('log')
+  pyplot.savefig(open("img-scaled-plot.png", "w"))
+#+END_SRC
+
+#+NAME: turn-logX-Lt-into-fine-histogram
+#+BEGIN_SRC python 
+  
+  # Note that we're using 128 bins for a fine-grained histogram.
+  H, log_xedges, yedges = numpy.histogram2d(numpy.log(X), Lt, bins=128)
+#+END_SRC
+
+#+NAME: turn-logX-Lt-into-coarse-histogram
+#+BEGIN_SRC python 
+  
+  # Note that we're using 25 bins for a coarse-grained histogram.
+  H, log_xedges, yedges = numpy.histogram2d(numpy.log(X), Lt, bins=25)
+#+END_SRC
+
+#+NAME: get-meshgrid-for-3d-plotting
+#+BEGIN_SRC python :noweb no-export
+
+  xmids = (log_xedges[:-1] + log_xedges[1:]) / 2
+  ymids = (yedges[:-1] + yedges[1:]) / 2
+  XX, YY = numpy.meshgrid(xmids, ymids)
+  
+  # NumPy histogram plotting is tricky.  The histogram2d function counts
+  # like one would expect, but for backwards compatibility reasons the
+  # resulting matrix of histogram heights is oriented the "wrong" way
+  # from the way that the meshgrid function creates identifying points.
+  # Hence the "transpose" line.
+  HH = H.transpose()
+#+END_SRC
+
+#+NAME: save-2d-hist-plot
+#+BEGIN_SRC python
+
+  pyplot.imshow(numpy.rot90(H), extent=[math.exp(log_xedges[0]), math.exp(log_xedges[-1]),
+                                        yedges[0], yedges[-1]], interpolation='nearest',
+                norm=colors.LogNorm(), aspect=0.8)
+  
+  pyplot.xlabel('X')
+  pyplot.ylabel('logit(Y/X)')
+  pyplot.xscale('log')
+  pyplot.colorbar()
+  
+  pyplot.savefig(open("img-two-hist-plot.png", "w"))
+#+END_SRC
+
+#+NAME: save-3d-hist-plot
+#+BEGIN_SRC python
+
+  indices = HH > 0
+  flat_X, flat_Y, flat_H = XX[indices], YY[indices], numpy.log(HH[indices])
+  
+  ax = pyplot.figure().gca(projection='3d')
+  ax.plot_trisurf(flat_X, flat_Y, flat_H, cmap=cm.jet)
+  ax.view_init(elev=25, azim=50)
+  
+  ax.set_xlabel('log(X)')
+  ax.set_ylabel('logit(Y/X)')
+  ax.set_zlabel('log(count)')
+  
+  pyplot.savefig(open("img-three-hist-plot.png", "w"))
+#+END_SRC
+
+#+NAME: save-contour-plot
+#+BEGIN_SRC python
+
+  cset = pyplot.figure().gca().contour(YY, numpy.log(HH + 1), XX, 10, zdir='x', cmap=cm.autumn_r, linewidths=2)
+  manual_locations = [(-5.4, 11), (-6.7, 9.7), (-6.8, 8.5), (-6.9, 6.6), (-6.9, 3.9)]
+  pyplot.clabel(cset, inline=1, fontsize=10, manual=manual_locations, fmt='%1.1f')
+  pyplot.xlabel('logit(Y/X)')
+  pyplot.ylabel('log(count)')
+  
+  pyplot.savefig(open("img-contour-plot.png", "w"))
+#+END_SRC
+
+*** Compounds for 2D Figures
+
+#+NAME: setup-simple-linreg-plots
+#+BEGIN_SRC python
+  <<declare-imports>>
+  <<get-raw-data-sample-array>>
+  <<process-numpy-array-to-X-Y-Lt>>
+  <<linear-regress-X-Lt-with-scipy>>
+  <<plotting-disclaimer>>
+  <<create-plot-from-linreg>>
+#+END_SRC
+
+*** Compounds for 3D Figures
+
+#+NAME: setup-big-histogram-plots
+#+BEGIN_SRC python
+  <<declare-imports>>
+  <<get-raw-data-all-array>>
+  <<process-numpy-array-to-X-Y-Lt>>
+  <<plotting-disclaimer>>
+#+END_SRC
+
+** Making Plots
+:PROPERTIES:
+:noweb: yes
+:results: silent
+:END:
+
+*** 2D Plots
+
+#+NAME: make-unscaled-plot
+#+BEGIN_SRC python
+  <<setup-simple-linreg-plots>>
+  <<save-unscaled-plot>>
+#+END_SRC
+
+#+NAME: make-scaled-plot
+#+BEGIN_SRC python
+  <<setup-simple-linreg-plots>>
+  <<save-scaled-plot>>
+#+END_SRC
+
+*** 3D Plots
+
+#+NAME: make-two-hist-plot
+#+BEGIN_SRC python
+  <<setup-big-histogram-plots>>
+  <<turn-logX-Lt-into-fine-histogram>>
+  <<save-2d-hist-plot>>
+#+END_SRC
+
+#+NAME: make-three-hist-plot
+#+BEGIN_SRC python
+  <<setup-big-histogram-plots>>
+  <<turn-logX-Lt-into-coarse-histogram>>
+  <<get-meshgrid-for-3d-plotting>>
+  <<save-3d-hist-plot>>
+#+END_SRC
+
+#+NAME: make-contour-plot
+#+BEGIN_SRC python
+  <<setup-big-histogram-plots>>
+  <<turn-logX-Lt-into-coarse-histogram>>
+  <<get-meshgrid-for-3d-plotting>>
+  <<save-contour-plot>>
+#+END_SRC
+
+** Code to Export (Tangle)
+
+*** Wiki Data
+:PROPERTIES:
+:eval:     never
+:END:
+
+#+NAME: grab-wikipedia
+#+BEGIN_SRC makefile :tangle yes
+  .RECIPEPREFIX = >
+  .DELETE_ON_ERROR :
+  .PRECIOUS : data-all-records enwiki-20130102-pages-articles.xml
+  .PHONY : all clean data dataclean report dist
+  .DEFAULT : all
+  
+  data_files = data-sample-records data-all-records enwiki-20130102-pages-articles.xml
+  
+  prog_files = exe-analysis-make-2d-plots.py exe-analysis-make-3d-plots.py \
+  exe-analysis-summary-stats.py exe-wiki-parse-wikipedia.py \
+  exe-wiki-random-sample.py
+  
+  img_files = img-scaled-plot.png img-unscaled-plot.png \
+  img-two-hist-plot.png img-three-hist-plot.png img-contour-plot.png
+  
+  all : report data
+  
+  clean : 
+  > -rm -f wikipedia.{aux,log,out,pdf,tex,tex~}
+  > -rm -f *.zip
+  > -rm -f $(prog_files)
+  > -rm -f $(img_files)
+  
+  data : $(data_files)
+  
+  dataclean :
+  > -rm -f enwiki-20130102-pages-articles.xml
+  > -rm -f data-all-records
+  > -rm -f data-sample-records
+  
+  dist : wikipedia.pdf $(data_files) $(prog_files)
+  > zip Appendix-A-Sample-Data data-sample-records exe-wiki-random-sample.py 
+  > zip Appendix-B-Summary-Statistics-Code exe-analysis-summary-stats.py 
+  > zip Appendix-C-Linreg-Figure-Code exe-analysis-make-2d-plots.py 
+  > zip Appendix-D-Data-Processing-Code exe-wiki-parse-wikipedia.py 
+  > zip Appendix-E-All-Processed-Data data-all-records 
+  > zip Appendix-F-Histogram-Figure-Code exe-analysis-make-3d-plots.py 
+  > zip Source wikipedia.org Makefile 
+  
+  report : wikipedia.pdf
+  
+  %.pdf : %.tex
+  > -pdflatex -interaction nonstopmode $<
+  > -pdflatex -interaction nonstopmode $<
+  > -pdflatex -interaction nonstopmode $<
+  
+  # Um.  That toothpick-ey regex works around a bug in Org-Mode.  I
+  # can't really explain it here.  The regex differs from the default
+  # value of org-babel-src-block-regexp in the "??" part of the last
+  # line.  Normal value is just one "?" there ... which makes the
+  # exporter accidentally chomp all of the text after the abstract.  Bug
+  # report has been submitted to the Org-Mode guys.
+  wikipedia.tex : $(data_files) $(img_files)
+  > emacs -Q --visit=wikipedia.org --eval "(progn \
+  (require 'cl) \
+  (require 'python) \
+  (require 'org) \
+  (require 'org-exp) \
+  (require 'ob) \
+  (require 'ob-python) \
+  (require 'ob-sh) \
+  (require 'ob-latex) \
+  (setq org-confirm-babel-evaluate nil) \
+  (setq org-babel-load-languages '((emacs-lisp . t) (latex . t) (python . t) (sh . t))) \
+  (setq org-babel-src-block-regexp \
+        (concat \
+         \"^\\\\([ \\t]*\\\\)#\\\\+begin_src[ \\t]+\\\\([^ \\f\\t\\n\\r\\v]+\\\\)[ \\t]*\" \
+         \"\\\\([^\\\":\\n]*\\\"[^\\\"\\n*]*\\\"[^\\\":\\n]*\\\\|[^\\\":\\n]*\\\\)\" \
+         \"\\\\([^\\n]*\\\\)\\n\" \
+         \"\\\\([^\\000]*?\\n\\\\)??[ \\t]*#\\\\+end_src\")))" \
+  --batch --funcall org-export-as-latex-batch
+  
+  img-scaled-plot.png img-unscaled-plot.png : exe-analysis-make-2d-plots.py data-sample-records
+  > ./exe-analysis-make-2d-plots.py
+  
+  img-two-hist-plot.png img-three-hist-plot.png img-contour-plot.png : exe-analysis-make-3d-plots.py data-all-records
+  > ./exe-analysis-make-3d-plots.py
+  
+  data-sample-records : data-all-records exe-wiki-random-sample.py
+  > ./exe-wiki-random-sample.py --percent 0.001 data-all-records >data-sample-records
+  
+  # The last-record tracking here approaches "an Aristocrats joke", in the
+  # colorful words of one blogger.  To explain:
+  
+  # 1. First, the variable "last_id" is set to the first string of
+  # numbers in the last line of the record data file.  This will be the
+  # Article ID of the last article parsed (or 0 if we don't have any
+  # records yet and need to parse everything).
+  
+  # 2. A pipeline is set up to read the xml, skip to just past the last
+  # article parsed, parse the remaining articles, throw away anything
+  # with zero links, and add everything that's left to the
+  # "data-all-records" file.
+  data-all-records : last_id := $(shell [ ! -e data-all-records ] && echo "0" || \
+  tail -1 data-all-records | grep -o "^[[:digit:]]\+")# Be sure there's no space at the end.
+  
+  data-all-records : enwiki-20130102-pages-articles.xml
+  > cat enwiki-20130102-pages-articles.xml | \
+  if [ $(last_id) == "0" ]; then cat; \
+  else sed -n -e "/<id>$(last_id)</,$$ p" | { echo "<mediawiki>"; sed -e '1,/<\/page>/ d'; }; \
+  fi | \
+  ./exe-wiki-parse-wikipedia.py | \
+  grep -v ":0$$" >>data-all-records
+  
+  enwiki-20130102-pages-articles.xml : 
+  > curl -C - -O http://dumps.wikimedia.org/enwiki/20130102/enwiki-20130102-pages-articles.xml.bz2
+  > bunzip2 enwiki-20130102-pages-articles.xml.bz2
+  
+  %.py : Makefile
+  > emacs -Q --batch --visit=wikipedia.org --eval "(progn \
+  (require 'org) \
+  (require 'org-exp) \
+  (require 'ob) \
+  (require 'ob-tangle) \
+  (re-search-forward \"^[ \\t]*#\\\\+begin_src[^\\n]*$@\") \
+  (org-babel-tangle t))"
+  
+  Makefile : wikipedia.org
+  > emacs -Q --batch --visit=wikipedia.org --eval "(progn \
+  (require 'org) \
+  (require 'org-exp) \
+  (require 'ob) \
+  (require 'ob-tangle) \
+  (re-search-forward \"^[ \\t]*#\\\\+begin_src[^\\n]*$@\") \
+  (org-babel-tangle t))"
+  > mv -f wikipedia.makefile Makefile
+#+END_SRC
+
+#+NAME: parse-wikipedia
+#+BEGIN_SRC python :tangle "exe-wiki-parse-wikipedia.py" :shebang "#!/usr/bin/env python3"
+  """Parse Wikipedia XML page data into summary records."""
+  
+  import bs4
+  from xml import sax
+  from xml.sax import handler
+  import functools
+  import re
+  import argparse
+  import sys
+  
+  help_epilog = """Notes:
+  
+      Records are colon-separated lines in the following format:
+      ID:TITLE:WORD_COUNT:LINK_COUNT
+  
+      ID = Wikipedia's article ID (string)
+      TITLE = Wiki's article title (string)
+      WORDS = Simple word count of the article contents
+      LINKS = Number of references / citations
+  
+  Gotchas:
+  
+      The word count includes some non-obvious stuff, like the list of
+      foreign language translations available.
+  
+      The link count does not multiple-count if the same ref is cited
+      multiple times.
+  
+      Due to a quirk in the parser, some article's link counts will be
+      thrown off.  This occurs when an article includes a short link of
+      the form <ref name=unquoted-text/> (as opposed to <ref
+      name="quoted-text"/>).  The parser doesn't realize the link has
+      been closed, so it ignores all subsequent text until it hits a
+      </ref>.  "List of Microsporidian genera" is particularly affected,
+      but otherwise we hope that this difference is immaterial ...
+  
+  Dependencies:
+  
+      BeautifulSoup 4
+  
+  """
+  
+  def coroutine(func):
+      @functools.wraps(func)
+      def decorator(*args,**kwargs):
+          cr = func(*args,**kwargs)
+          next(cr)
+          return cr
+      return decorator
+  
+  def add_debug(f, file_handle=sys.stderr):
+      @functools.wraps(f)
+      def wrapper(*args, **kwds):
+          print(f.__name__, ":", args, ":", kwds, file=file_handle)
+          return f(*args, **kwds)
+      return wrapper
+  
+  class SimpleHandler(handler.ContentHandler):
+      def _NoOp(*args, **kwargs):
+          pass
+      def __init__(self):
+          self.parse_fns = {}
+          self._NoParse = self._NoOp, self._NoOp, self._NoOp
+          self._current_record = {}
+      def startElement(self, name, attrs):
+          "Set the internal parse functions."
+          setup, self._process, _ = self.parse_fns.get(name, self._NoParse)
+          record = setup()
+          if record is not None:
+              self._current_record = record
+      def characters(self, content):
+          "Process this chunk of data."
+          self._process(content)
+      def endElement(self, name):
+          "Clean up any data I've parsed."
+          _, _, finish = self.parse_fns.get(name, self._NoParse)
+          finish(name, self._current_record)
+  
+  def MakeKeywordParser():
+      "Build a simple Name: Text pair from the element."
+      current_data = ""
+      def setup():
+          nonlocal current_data
+          current_data = ""
+      def process(data):
+          nonlocal current_data
+          current_data += data
+      def finish(name, record):
+          record[name] = current_data
+      return setup, process, finish
+  
+  def MakeFirstKeywordParser():
+      "Like the simple KeywordParser, only don't overwrite a previous Name: Text pair."
+      # This is really dumb.  I want to capture the article ID, which
+      # comes early on, and I don't want to overwrite it with the
+      # revision ID or contributor ID that comes later.
+      current_data = ""
+      def setup():
+          nonlocal current_data
+          current_data = ""
+      def process(data):
+          nonlocal current_data
+          current_data += data
+      def finish(name, record):
+          if name not in record:
+              record[name] = current_data
+      return setup, process, finish
+  
+  def MakeTextParser():
+      "Parse the XML's 'text' element with Beautiful Soup."
+      accum_text = ""
+      def link_filter_fn(tag):
+          "Needed for Beautiful Soup's find_all"
+          tag_is_link = tag.name == 'ref'
+          tag_has_text = tag.text != ''
+          return tag_is_link and tag_has_text
+      def setup():
+          nonlocal accum_text
+          accum_text = ""
+      def process(data):
+          nonlocal accum_text
+          accum_text += data
+      def finish(name, record):
+          try:
+              # "lxml" in this case means "fast HTML parser"
+              soup = bs4.BeautifulSoup(accum_text, "lxml") 
+          except:
+              # slower parser, but handles some articles that choke lxml
+              soup = bs4.BeautifulSoup(accum_text, "html.parser") 
+          record["wc"] = len(re.findall("\w+", soup.text))
+          record["lc"] = len(soup.find_all(link_filter_fn))
+      return setup, process, finish
+          
+  def MakeOutputParser(coroutine):
+      "Setup clean records and flush processed ones down the pipe."
+      def setup():
+          return {}
+      def process(data):
+          pass
+      def finish(name, record):
+          coroutine.send(record)
+      return setup, process, finish
+  
+  def main(argv=None):
+      if argv is None:
+          argv = sys.argv
+          
+      parser = argparse.ArgumentParser(description=__doc__, epilog=help_epilog, formatter_class=argparse.RawDescriptionHelpFormatter)
+      parser.add_argument("-d", "--debug", action='store_true', help="Print debug information as the parser parses.")
+      parser.add_argument("files", metavar="FILE", nargs="*", help="An XML file to be processed. No file means process stdin.")
+      args = parser.parse_args(argv[1:])
+      debug = args.debug
+      files = args.files
+  
+      def register_with(parser, fns, *keywords):
+          for word in keywords:
+              parser.parse_fns[word] = fns
+  
+      X = SimpleHandler()
+      register_with(X, MakeKeywordParser(), "title", "ns")
+      register_with(X, MakeFirstKeywordParser(), "id")
+      register_with(X, MakeTextParser(), "text")
+  
+      @coroutine
+      def record_pipe():
+          while True:
+              record = (yield)
+              if record.get("ns") == "0":
+                  items = [record['id'], record['title'].replace(":", "\:"), str(record['wc']), str(record['lc'])]
+                  print(":".join(items))
+  
+      register_with(X, MakeOutputParser(record_pipe()), "page")
+  
+      if debug:
+          X.startElement = add_debug(X.startElement, sys.stdout)
+          X.characters = add_debug(X.characters, sys.stdout)
+          X.endElement = add_debug(X.endElement, sys.stdout)
+  
+      if len(files) == 0:
+          sax.parse(sys.stdin, X)
+      else:
+          for filename in files:
+              with open(filename, "r") as f:
+                  sax.parse(f, X)
+  
+  if __name__ == "__main__":
+      sys.exit(main())
+#+END_SRC
+
+#+NAME: draw-random-sample
+#+BEGIN_SRC python :tangle "exe-wiki-random-sample.py" :shebang "#!/usr/bin/env python3"
+  """Filter a percentage of input lines with a random number generator."""
+  import sys
+  import argparse
+  import random
+  
+  def main(argv=None):
+      if argv is None:
+          argv = sys.argv
+      parser = argparse.ArgumentParser(description=__doc__)
+  
+      parser.add_argument("-s", "--seed", default=None, help="Seed for the random number generator.")
+      parser.add_argument("-p", "--percent", default=0.50, type=float, help="Approximate percentage of lines remaining.")
+      parser.add_argument("files", metavar="FILE", nargs=argparse.REMAINDER, help="Files to filter.  No file reads from stdin.")
+      args = parser.parse_args(argv[1:])
+  
+      random.seed(args.seed)
+  
+      if len(args.files) == 0:
+          for line in sys.stdin:
+              if random.random() < args.percent:
+                  print(line.strip())
+      else:
+          for filename in args.files:
+              with open(filename) as f:
+                  for line in f:
+                      if random.random() < args.percent:
+                          print(line.strip())
+  
+  if __name__ == "__main__":
+      sys.exit(main())
+#+END_SRC
+
+*** Stats and Figures
+:PROPERTIES:
+:noweb: yes
+:results: silent
+:END:
+
+#+NAME: make-summary-stats-python
+#+BEGIN_SRC python :tangle "exe-analysis-summary-stats.py" :shebang "#!/usr/bin/env python3"
+  <<make-summary-stats-table>>
+
+  # The summary stats don't print nearly as well in Python as they do in
+  # LaTeX, but we include this for completeness.
+  print(summary_stats)
+#+END_SRC
+
+#+NAME: make-all-2d-plots-python
+#+BEGIN_SRC python :tangle "exe-analysis-make-2d-plots.py" :shebang "#!/usr/bin/env python3"
+  <<setup-simple-linreg-plots>>
+  <<save-unscaled-plot>>
+  <<save-scaled-plot>>
+#+END_SRC
+
+#+NAME: make-all-3d-plots
+#+BEGIN_SRC python :tangle "exe-analysis-make-3d-plots.py" :shebang "#!/usr/bin/env python3"
+  <<setup-big-histogram-plots>>
+  <<turn-logX-Lt-into-fine-histogram>>
+  <<save-2d-hist-plot>>
+  <<turn-logX-Lt-into-coarse-histogram>>
+  <<get-meshgrid-for-3d-plotting>>
+  <<save-3d-hist-plot>>
+  <<save-contour-plot>>
+#+END_SRC
+
+** Statistical Code
+
+*** Declarations (noexec)
+:PROPERTIES:
+:eval: never
+:END:
+
+#+NAME: linear-regress-X-Lt-with-scipy
+#+BEGIN_SRC python
+
+  # Calculate the linear regression with SciPy linregress function.
+  slope, intercept, r_value, p_value, stderr = stats.linregress(X, Lt)
+  Lt_hat = intercept + slope * X
+#+END_SRC
+
+#+NAME: from-numpy-array-make-summary-stats
+#+BEGIN_SRC python
+  
+  # The describe and scoreatpercentile functions do heavy lifting here.
+  # Check SciPy for full documentation.
+  N, (Min, Max), Mean, Variance, Skewness, Kurtosis = stats.describe(data)
+  
+  Q_1, Median, Q_3 = [stats.scoreatpercentile(data, i) for i in (25, 50, 75)]
+  
+  StdDev = (math.sqrt(Variance[0]), math.sqrt(Variance[1]))
+#+END_SRC
+
+*** Calculations (exec)
+:PROPERTIES:
+:noweb: yes
+:END:
+
+#+NAME: make-linreg-stats-table
+#+HEADER: :colnames '("Slope" "Intercept" "R Value" "P Value" "StdErr" "BetaMult")
+#+BEGIN_SRC python :return linreg_stats
+  <<declare-imports>>
+  <<get-raw-data-sample-array>>
+  <<process-numpy-array-to-X-Y-Lt>>
+  <<linear-regress-X-Lt-with-scipy>>
+  
+  Xbar = sum(X) / len(X)
+  beta_mult = math.sqrt(1 / sum((X - Xbar)**2))
+  linreg_stats = [[slope, intercept, r_value, p_value, stderr, beta_mult]]
+#+END_SRC
+
+#+TBLNAME: linreg-stats-table
+#+RESULTS[a6916885706bbb4acb3634aa347a9dca4c8ef418]: make-linreg-stats-table
+|                  Slope |          Intercept |              R Value |                P Value |                StdErr |             BetaMult |
+|------------------------+--------------------+----------------------+------------------------+-----------------------+----------------------|
+| -4.972082441886146e-05 | -5.127786951398692 | -0.11272293394467421 | 1.9142310253560464e-08 | 8.818621606730039e-06 | 1.09072780800565e-05 |
+
+#+NAME: linreg-alpha
+#+HEADER: :var linreg-stats=linreg-stats-table
+#+BEGIN_SRC emacs-lisp
+(nth 1 (caddr linreg-stats))
+#+END_SRC
+
+#+RESULTS[2ddac0ba5abb37fffbf3dfcf9ea2f9261428b61b]: linreg-alpha
+: -5.127786951398692
+
+#+NAME: linreg-beta
+#+HEADER: :var linreg-stats=linreg-stats-table
+#+BEGIN_SRC emacs-lisp
+(nth 0 (caddr linreg-stats))
+#+END_SRC
+
+#+RESULTS[9eff510b2d1790e1a26f7c55d90f92a3e54b4faf]: linreg-beta
+: -4.972082441886146e-05
+
+#+NAME: linreg-p
+#+HEADER: :var linreg-stats=linreg-stats-table
+#+BEGIN_SRC emacs-lisp
+(nth 3 (caddr linreg-stats))
+#+END_SRC
+
+#+RESULTS[d396010ce513c9edfe8e5a63bef5b1a012fdd2d8]: linreg-p
+: 1.9142310253560464e-08
+
+#+NAME: linreg-stderr
+#+HEADER: :var linreg-stats=linreg-stats-table
+#+BEGIN_SRC emacs-lisp
+(nth 4 (caddr linreg-stats))
+#+END_SRC
+
+#+RESULTS[1772a83e0879ba9c9cd93fa7efb17d3b9d3e6410]: linreg-stderr
+: 8.818621606730039e-06
+
+#+NAME: linreg-beta-mult
+#+HEADER: :var linreg-stats=linreg-stats-table
+#+BEGIN_SRC emacs-lisp
+(nth 5 (caddr linreg-stats))
+#+END_SRC
+
+#+RESULTS[75a47b6d9c75f8e884391b01e84b89195d27e058]: linreg-beta-mult
+: 1.09072780800565e-05
+
+#+NAME: linreg-beta-stderr
+#+HEADER: :var linreg-stats=linreg-stats-table
+#+BEGIN_SRC emacs-lisp
+  (*
+   (string-to-number (nth 4 (caddr linreg-stats)))
+   (string-to-number (nth 4 (caddr linreg-stats))))
+#+END_SRC
+
+#+RESULTS[05aa34bad1adfdaf6c965ba07c77e84a47ab59ec]: linreg-beta-stderr
+: 7.776808704268589e-11
+
+** Doc-Supporting Code
+
+#+NAME: make-sample-data-table
+#+HEADER: :colnames '("Article ID" "Article Title" "Word Count $X$" "Link (Cite) Count $Y$")
+#+BEGIN_SRC sh
+  head -2 data-sample-records | sed -e 's/\\:/\x0/g' -e 's/:/\t/g' -e 's/\x0/:/g'
+  echo -e " \t ... \t \t "
+  tail -2 data-sample-records | sed -e 's/\\:/\x0/g' -e 's/:/\t/g' -e 's/\x0/:/g'
+#+END_SRC
+
+#+TBLNAME: sample-data-table
+#+RESULTS[8bd9364ae6bee2cd02147ee717e572631c1c227c]: make-sample-data-table
+| Article ID | Article Title                         | Word Count $X$ | Link (Cite) Count $Y$ |
+|------------+---------------------------------------+----------------+-----------------------|
+|       1146 | Assembly line                         |           3733 |                    17 |
+|       3395 | Gautama Buddha                        |           9343 |                    63 |
+|            | ...                                   |                |                       |
+|   38083580 | Midland Railway War Memorial, Derby   |            671 |                     8 |
+|   38087721 | Hugh Gallacher (footballer born 1870) |            267 |                     1 |
+
+#+NAME: make-summary-stats-table
+#+HEADER: :rownames '("$X$" "$Y$")
+#+HEADER: :colnames '("Var" "N" "Min" "$Q_1$" "Median" "Mean" "$Q_3$" "Max" "StdDev")
+#+BEGIN_SRC python :return summary_stats :noweb yes
+  <<declare-imports>>
+  <<get-raw-data-sample-array>>
+  <<from-numpy-array-make-summary-stats>>
+  
+  def int_from_float(tup):
+      return tuple(int(f) for f in tup)
+  
+  # N is just a scalar, but we want a pair for the list processing.
+  N = (N, N)
+  lst = [int_from_float(tup) for tup in (N, Min, Q_1, Median, Mean, Q_3, Max, StdDev)]
+  summary_stats = numpy.array(lst).transpose()
+#+END_SRC
+
+#+TBLNAME: summary-stats-table
+#+RESULTS[406a736e7a6f8d73218920c4f22ef8ce0e389725]: make-summary-stats-table
+| Var |    N | Min | $Q_1$ | Median | Mean | $Q_3$ |   Max | StdDev |
+|-----+------+-----+-------+--------+------+-------+-------+--------|
+| $X$ | 2472 |  30 |   272 |    556 | 1070 |  1158 | 28844 |   1844 |
+| $Y$ | 2472 |   1 |     1 |      3 |    7 |     7 |   476 |     19 |
+
+** Library of Babel Code
+
+#+NAME: BOOKTABS
+#+BEGIN_SRC emacs-lisp :noweb yes :results latex :exports none :var table='((:head) hline (:body)) :var align='() :var env="tabular" :var width='()
+  (flet ((to-tab (tab)
+		 (orgtbl-to-generic
+		  (mapcar (lambda (lis)
+			    (if (listp lis)
+				(mapcar (lambda (el)
+					  (if (stringp el)
+					      el
+					    (format "%S" el))) lis)
+			      lis)) tab)
+		  (list :lend " \\\\" :sep " & " :hline "\\hline"))))
+    (org-fill-template
+     "
+  \\begin{%env}%width%align
+  \\toprule
+  %table
+  \\bottomrule
+  \\end{%env}\n"
+     (list
+      (cons "env"       (or env "table"))
+      (cons "width"     (if width (format "{%s}" width) ""))
+      (cons "align"     (if align (format "{%s}" align) ""))
+      (cons "table"
+	    ;; only use \midrule if it looks like there are column headers
+	    (if (equal 'hline (second table))
+		(concat (to-tab (list (first table)))
+			"\n\\midrule\n"
+			(to-tab (cddr table)))
+	      (to-tab table))))))
+#+END_SRC
+
+* File Local Variables						   :noexport:
+
+# Local Variables:
+# fill-column: 80
+# org-confirm-babel-evaluate: nil
+# org-adapt-indentation: nil
+# End:
+
+* Footnotes
+
+[fn:1] enwiki-20130102-pages-articles.xml.bz2 from [[http://dumps.wikimedia.org/enwiki/20130102/]]
+
+[fn:2] [[http://meta.wikimedia.org/wiki/Database_dump\#Format]]
+
+[fn:3] [[http://python.org/]]
+
+[fn:4] [[http://www.scipy.org/]]
+
+[fn:5] [[http://matplotlib.org/]]
+
+[fn:6] Note that we are using a version of the =log= function from the =numpy=
+package that applies to array variables.  NumPy is a package of numerical
+computing functions that undergirds SciPy.
+
+[fn:7] Note the distinct diagonal lines on the log-scaled
+Figure\nbsp\ref{fig:scaled-plot}.  Moving from the lower left to the upper right
+of the graph, the lines represent articles with precisely one citation,
+precisely two, etc.
+
+[fn:8] [[http://orgmode.org/]]
+
+[fn:9] [[http://www.gnu.org/software/emacs/]]
+
+[fn:10] In the interest of protecting the innocent, the commands to reproduce
+the report have been buried in this footnote.  The report source files are
+called =wikipedia.org= and =Makefile=.  \par To download and parse the data,
+navigate to the source folder and type =make data= at the command prompt.  Keep
+in mind \mytilde 50 gigabytes and \mytilde 10 hours required.  \par Afterwards,
+type =make report= to create the file =wikipedia.pdf=.  Note that, in case of
+any interruption, you may resume where the code left off by simply typing
+=make=.
+
+
